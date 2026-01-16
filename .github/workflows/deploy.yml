@@ -1,0 +1,39 @@
+name: Deploy to AWS Lambda
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  id-token: write  # OIDC認証に必要
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION || 'ap-northeast-1' }}
+
+      - name: Deploy to Lambda
+        uses: aws-actions/aws-lambda-deploy@v1
+        with:
+          function-name: ${{ vars.LAMBDA_FUNCTION_NAME || 'my-lambda-function' }}
+          code-artifacts-dir: src/
+          handler: index.handler
+          runtime: nodejs20.x
+          publish: true

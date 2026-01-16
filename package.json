@@ -1,0 +1,13 @@
+{
+  "name": "lambda-github-actions-demo",
+  "version": "1.0.0",
+  "description": "AWS Lambda deployment with GitHub Actions",
+  "main": "src/index.js",
+  "type": "module",
+  "scripts": {
+    "test": "echo \"No tests yet\" && exit 0",
+    "zip": "zip -r function.zip src/"
+  },
+  "keywords": ["lambda", "aws", "github-actions"],
+  "license": "MIT"
+}
