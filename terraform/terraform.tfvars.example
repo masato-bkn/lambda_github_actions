@@ -1,0 +1,4 @@
+aws_region           = "ap-northeast-1"
+github_org           = "your-github-username"
+github_repo          = "lambda_github_actions"
+lambda_function_name = "my-lambda-function"
