@@ -45,6 +45,11 @@ resource "aws_iam_role_policy_attachment" "lambda_basic_execution" {
   policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
 }
 
+resource "aws_iam_role_policy_attachment" "lambda_sqs_execution" {
+  role       = aws_iam_role.lambda_execution.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaSQSQueueExecutionRole"
+}
+
 # GitHub Actions deploy role
 resource "aws_iam_role" "github_actions_lambda_deploy" {
   name = "github-actions-lambda-deploy"
@@ -89,4 +94,24 @@ resource "aws_iam_role_policy" "github_actions_lambda_deploy" {
       }
     ]
   })
+}
+
+# SQS Queue
+resource "aws_sqs_queue" "lambda_trigger" {
+  name                       = "${var.lambda_function_name}-queue"
+  visibility_timeout_seconds = 30
+}
+
+# Lambda alias for production
+resource "aws_lambda_alias" "prod" {
+  name             = "prod"
+  function_name    = var.lambda_function_name
+  function_version = var.lambda_version
+}
+
+# Lambda event source mapping (SQS -> Lambda alias)
+resource "aws_lambda_event_source_mapping" "sqs_trigger" {
+  event_source_arn = aws_sqs_queue.lambda_trigger.arn
+  function_name    = aws_lambda_alias.prod.arn
+  batch_size       = 10
 }

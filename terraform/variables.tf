@@ -19,3 +19,9 @@ variable "lambda_function_name" {
   type        = string
   default     = "my-lambda-function"
 }
+
+variable "lambda_version" {
+  description = "Lambda version for prod alias"
+  type        = string
+  default     = "4"
+}

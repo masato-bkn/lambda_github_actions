@@ -12,3 +12,13 @@ output "oidc_provider_arn" {
   description = "ARN of GitHub OIDC provider"
   value       = aws_iam_openid_connect_provider.github.arn
 }
+
+output "sqs_queue_url" {
+  description = "URL of SQS queue for Lambda trigger"
+  value       = aws_sqs_queue.lambda_trigger.url
+}
+
+output "sqs_queue_arn" {
+  description = "ARN of SQS queue"
+  value       = aws_sqs_queue.lambda_trigger.arn
+}
