@@ -1,12 +1,16 @@
 # AWS Lambda GitHub Actions Demo
 
-GitHub Actionsを使用してAWS Lambdaに自動デプロイするサンプルプロジェクト。
+GitHub Actionsを使用してAWS Lambdaにデプロイするサンプルプロジェクト。
 
 ## 構成
 
 ```
 ├── .github/workflows/deploy.yml  # GitHub Actionsワークフロー
 ├── src/index.js                  # Lambda関数
+├── terraform/                    # インフラ管理
+│   ├── main.tf
+│   ├── variables.tf
+│   └── outputs.tf
 └── package.json
 ```
 
@@ -17,70 +21,116 @@ GitHub Actionsを使用してAWS Lambdaに自動デプロイするサンプル�
 
 ## セットアップ手順
 
-### 1. AWS側の設定
-
-#### Lambda関数を作成
+### 1. Lambda関数を作成
 
 ```bash
+# srcディレクトリをzip化
+zip -r function.zip src/
+
+# Lambda関数を作成
 aws lambda create-function \
   --function-name my-lambda-function \
   --runtime nodejs20.x \
-  --handler src/index.handler \
+  --handler index.handler \
   --role arn:aws:iam::ACCOUNT_ID:role/lambda-execution-role \
   --zip-file fileb://function.zip
 ```
 
-#### GitHub OIDC プロバイダーを追加
+**注意**: Lambda関数はCommonJS形式（`exports.handler`）で記述してください。ESモジュール形式（`export const handler`）はエラーになります。
 
-IAM > Identity providers で以下を設定：
-- Provider URL: `https://token.actions.githubusercontent.com`
-- Audience: `sts.amazonaws.com`
+### 2. Terraformでインフラを作成
 
-#### IAM ロールを作成
+```bash
+cd terraform
 
-信頼ポリシー：
+# 変数ファイルを作成
+cp terraform.tfvars.example terraform.tfvars
+# terraform.tfvars を編集
 
-```json
-{
-  "Version": "2012-10-17",
-  "Statement": [
-    {
-      "Effect": "Allow",
-      "Principal": {
-        "Federated": "arn:aws:iam::ACCOUNT_ID:oidc-provider/token.actions.githubusercontent.com"
-      },
-      "Action": "sts:AssumeRoleWithWebIdentity",
-      "Condition": {
-        "StringEquals": {
-          "token.actions.githubusercontent.com:aud": "sts.amazonaws.com"
-        },
-        "StringLike": {
-          "token.actions.githubusercontent.com:sub": "repo:YOUR_ORG/YOUR_REPO:*"
-        }
-      }
-    }
-  ]
-}
+# 実行
+terraform init
+terraform plan
+terraform apply
 ```
 
-必要な権限：
-- `lambda:UpdateFunctionCode`
-- `lambda:UpdateFunctionConfiguration`
-- `lambda:GetFunctionConfiguration`
+Terraformで作成されるリソース：
+- GitHub OIDC プロバイダー
+- Lambda実行ロール（`lambda-execution-role`）
+- GitHub Actions用ロール（`github-actions-lambda-deploy`）
+- SQSキュー（Lambdaトリガー用）
+- Lambdaエイリアス（`prod`）
+- イベントソースマッピング（SQS → Lambda）
+- API Gateway HTTP API（Lambda呼び出し用エンドポイント）
 
-### 2. GitHub側の設定
+### 3. GitHub側の設定
 
 リポジトリの Settings > Secrets and variables > Actions で設定：
 
 | 種類 | 名前 | 値 |
 |------|------|-----|
-| Secret | `AWS_ROLE_ARN` | IAMロールのARN |
+| Secret | `AWS_ROLE_ARN` | `terraform output github_actions_role_arn` の値 |
 | Variable | `AWS_REGION` | `ap-northeast-1` |
 | Variable | `LAMBDA_FUNCTION_NAME` | Lambda関数名 |
 
-### 3. デプロイ
+### 4. デプロイ
 
-`main`ブランチにプッシュすると自動的にデプロイが実行されます。
+GitHub Actions タブ → 「Run workflow」ボタンで手動実行。
+
+## API Gatewayのテスト
+
+```bash
+cd terraform
+
+# エンドポイントURLを取得
+terraform output api_gateway_url
+
+# curlでテスト
+curl $(terraform output -raw api_gateway_url)
+```
+
+## SQSトリガーのテスト
+
+```bash
+cd terraform
+
+# SQSにメッセージ送信
+aws sqs send-message \
+  --queue-url $(terraform output -raw sqs_queue_url) \
+  --message-body '{"test": "hello"}'
+
+# CloudWatch Logsでログ確認
+aws logs tail /aws/lambda/my-lambda-function --follow
+```
+
+## ロールバック
+
+エイリアス（`prod`）を使用しているため、バージョンを切り替えるだけでロールバックできます。
+
+### Terraformで変更
+
+```bash
+# バージョン3にロールバック
+terraform apply -var="lambda_version=3"
+```
+
+### AWS CLIで変更
+
+```bash
+# バージョン一覧を確認
+aws lambda list-versions-by-function --function-name my-lambda-function
+
+# エイリアスの向き先を変更
+aws lambda update-alias \
+  --function-name my-lambda-function \
+  --name prod \
+  --function-version 3
+```
+
+### AWSコンソールで変更
+
+1. Lambda → 関数を選択
+2. 「エイリアス」タブ → `prod` をクリック
+3. 「編集」→ バージョンを変更 → 「保存」
 
 ## 参考リンク
 

@@ -115,3 +115,67 @@ resource "aws_lambda_event_source_mapping" "sqs_trigger" {
   function_name    = aws_lambda_alias.prod.arn
   batch_size       = 10
 }
+
+# =============================================================================
+# API Gateway HTTP API
+# HTTP APIはREST APIよりもシンプルで低コスト
+#
+# リクエストの流れ:
+#   クライアント → API Gateway → route(URLマッチング) → integration(転送設定) → Lambda
+# =============================================================================
+
+# API Gateway本体の作成
+resource "aws_apigatewayv2_api" "lambda_api" {
+  name          = "${var.lambda_function_name}-api"
+  protocol_type = "HTTP"
+}
+
+# デフォルトステージ（自動デプロイ有効）
+resource "aws_apigatewayv2_stage" "default" {
+  api_id      = aws_apigatewayv2_api.lambda_api.id
+  name        = "$default"
+  auto_deploy = true
+}
+
+# Lambda統合設定
+# - integration_type: AWS_PROXY = リクエストをそのままLambdaに渡し、レスポンスもそのまま返す方式
+# - integration_uri: 転送先のLambda（prodエイリアス）のARN
+# - payload_format_version: 2.0 = HTTP API用の新しいイベント形式
+resource "aws_apigatewayv2_integration" "lambda" {
+  api_id                 = aws_apigatewayv2_api.lambda_api.id
+  integration_type       = "AWS_PROXY"
+  integration_uri        = aws_lambda_alias.prod.invoke_arn
+  payload_format_version = "2.0"
+}
+
+# 全パス・全メソッドをLambdaにルーティング
+# /{proxy+} は「1つ以上のパスセグメント」を意味する
+# 例: /foo, /foo/bar, /a/b/c などにマッチ
+# 注意: /{proxy+} はルートパス（/）にはマッチしないため、別途 ANY / のルートが必要
+resource "aws_apigatewayv2_route" "default" {
+  api_id    = aws_apigatewayv2_api.lambda_api.id
+  route_key = "ANY /{proxy+}"
+  target    = "integrations/${aws_apigatewayv2_integration.lambda.id}"
+}
+
+# ルートパス（/）へのルーティング
+# /{proxy+} がルートパスにマッチしないため、これがないと / へのアクセスが404になる
+resource "aws_apigatewayv2_route" "root" {
+  api_id    = aws_apigatewayv2_api.lambda_api.id
+  route_key = "ANY /"
+  target    = "integrations/${aws_apigatewayv2_integration.lambda.id}"
+}
+
+# API GatewayにLambdaを呼び出す「許可」を与える
+# Lambdaはデフォルトで外部からの呼び出しを拒否するため、この設定がないと403エラーになる
+#
+# - qualifier（修飾子）: Lambda関数のどのバージョン/エイリアスに許可を与えるかを限定する
+#   integrationでprodエイリアスを呼び出すため、permissionもprodに対して設定する必要がある
+resource "aws_lambda_permission" "api_gateway" {
+  statement_id  = "AllowAPIGatewayInvoke"
+  action        = "lambda:InvokeFunction"
+  function_name = var.lambda_function_name
+  qualifier     = aws_lambda_alias.prod.name
+  principal     = "apigateway.amazonaws.com"
+  source_arn    = "${aws_apigatewayv2_api.lambda_api.execution_arn}/*/*"
+}

@@ -22,3 +22,14 @@ output "sqs_queue_arn" {
   description = "ARN of SQS queue"
   value       = aws_sqs_queue.lambda_trigger.arn
 }
+
+# API Gateway outputs
+output "api_gateway_url" {
+  description = "API Gateway endpoint URL (このURLでLambdaを呼び出せます)"
+  value       = aws_apigatewayv2_api.lambda_api.api_endpoint
+}
+
+output "api_gateway_id" {
+  description = "API Gateway ID"
+  value       = aws_apigatewayv2_api.lambda_api.id
+}
