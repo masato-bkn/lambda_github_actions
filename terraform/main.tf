@@ -102,17 +102,11 @@ resource "aws_sqs_queue" "lambda_trigger" {
   visibility_timeout_seconds = 30
 }
 
-# Lambda alias for production
-resource "aws_lambda_alias" "prod" {
-  name             = "prod"
-  function_name    = var.lambda_function_name
-  function_version = var.lambda_version
-}
-
-# Lambda event source mapping (SQS -> Lambda alias)
+# Lambda event source mapping (SQS -> Lambda)
+# エイリアスではなくLambda関数本体を呼び出す（エイリアスはGitHub Actionsで管理）
 resource "aws_lambda_event_source_mapping" "sqs_trigger" {
   event_source_arn = aws_sqs_queue.lambda_trigger.arn
-  function_name    = aws_lambda_alias.prod.arn
+  function_name    = var.lambda_function_name
   batch_size       = 10
 }
 
@@ -139,12 +133,12 @@ resource "aws_apigatewayv2_stage" "default" {
 
 # Lambda統合設定
 # - integration_type: AWS_PROXY = リクエストをそのままLambdaに渡し、レスポンスもそのまま返す方式
-# - integration_uri: 転送先のLambda（prodエイリアス）のARN
+# - integration_uri: 転送先のLambda関数のARN（HTTP APIではシンプルなARN形式でOK）
 # - payload_format_version: 2.0 = HTTP API用の新しいイベント形式
 resource "aws_apigatewayv2_integration" "lambda" {
   api_id                 = aws_apigatewayv2_api.lambda_api.id
   integration_type       = "AWS_PROXY"
-  integration_uri        = aws_lambda_alias.prod.invoke_arn
+  integration_uri        = "arn:aws:lambda:${var.aws_region}:${data.aws_caller_identity.current.account_id}:function:${var.lambda_function_name}"
   payload_format_version = "2.0"
 }
 
@@ -168,14 +162,10 @@ resource "aws_apigatewayv2_route" "root" {
 
 # API GatewayにLambdaを呼び出す「許可」を与える
 # Lambdaはデフォルトで外部からの呼び出しを拒否するため、この設定がないと403エラーになる
-#
-# - qualifier（修飾子）: Lambda関数のどのバージョン/エイリアスに許可を与えるかを限定する
-#   integrationでprodエイリアスを呼び出すため、permissionもprodに対して設定する必要がある
 resource "aws_lambda_permission" "api_gateway" {
   statement_id  = "AllowAPIGatewayInvoke"
   action        = "lambda:InvokeFunction"
   function_name = var.lambda_function_name
-  qualifier     = aws_lambda_alias.prod.name
   principal     = "apigateway.amazonaws.com"
   source_arn    = "${aws_apigatewayv2_api.lambda_api.execution_arn}/*/*"
 }

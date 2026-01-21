@@ -23,7 +23,7 @@ GitHub Actionsを使用してAWS Lambdaにデプロイするサンプルプロ�
 
 ### 1. Terraformでインフラを作成
 
-まずTerraformでIAMロールなどのインフラを作成します。(aliasの作成は失敗するはず)
+まずTerraformでIAMロールなどのインフラを作成します。
 
 ```bash
 cd terraform
@@ -43,7 +43,6 @@ Terraformで作成されるリソース：
 - Lambda実行ロール（`lambda-execution-role`）
 - GitHub Actions用ロール（`github-actions-lambda-deploy`）
 - SQSキュー（Lambdaトリガー用）
-- Lambdaエイリアス（`prod`）
 - イベントソースマッピング（SQS → Lambda）
 - API Gateway HTTP API（Lambda呼び出し用エンドポイント）
 
@@ -52,8 +51,8 @@ Terraformで作成されるリソース：
 Terraformで作成されたロールを使ってLambda関数を作成します。
 
 ```bash
-# srcディレクトリをzip化
-zip -r function.zip src/
+# srcディレクトリ内をzip化（index.jsがルートに来るように）
+cd src && zip -r ../function.zip . && cd ..
 
 # Terraformで作成されたロールARNを取得
 cd terraform
@@ -113,33 +112,15 @@ aws logs tail /aws/lambda/my-lambda-function --follow
 
 ## ロールバック
 
-エイリアス（`prod`）を使用しているため、バージョンを切り替えるだけでロールバックできます。
-
-### Terraformで変更
+古いコードに戻したい場合は、該当するコミットをチェックアウトして再デプロイします。
 
 ```bash
-# バージョン3にロールバック
-terraform apply -var="lambda_version=3"
+# 特定のコミットに戻す
+git checkout <commit-hash>
+
+# GitHub Actionsで再デプロイ
+git push origin main
 ```
-
-### AWS CLIで変更
-
-```bash
-# バージョン一覧を確認
-aws lambda list-versions-by-function --function-name my-lambda-function
-
-# エイリアスの向き先を変更
-aws lambda update-alias \
-  --function-name my-lambda-function \
-  --name prod \
-  --function-version 3
-```
-
-### AWSコンソールで変更
-
-1. Lambda → 関数を選択
-2. 「エイリアス」タブ → `prod` をクリック
-3. 「編集」→ バージョンを変更 → 「保存」
 
 ## 参考リンク
 
