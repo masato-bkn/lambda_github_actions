@@ -21,31 +21,16 @@ GitHub Actionsを使用してAWS Lambdaにデプロイするサンプルプロ�
 
 ## セットアップ手順
 
-### 1. Lambda関数を作成
+### 1. Terraformでインフラを作成
 
-```bash
-# srcディレクトリをzip化
-zip -r function.zip src/
-
-# Lambda関数を作成
-aws lambda create-function \
-  --function-name my-lambda-function \
-  --runtime nodejs20.x \
-  --handler index.handler \
-  --role arn:aws:iam::ACCOUNT_ID:role/lambda-execution-role \
-  --zip-file fileb://function.zip
-```
-
-**注意**: Lambda関数はCommonJS形式（`exports.handler`）で記述してください。ESモジュール形式（`export const handler`）はエラーになります。
-
-### 2. Terraformでインフラを作成
+まずTerraformでIAMロールなどのインフラを作成します。(aliasの作成は失敗するはず)
 
 ```bash
 cd terraform
 
 # 変数ファイルを作成
 cp terraform.tfvars.example terraform.tfvars
-# terraform.tfvars を編集
+# terraform.tfvars を編集（github_org, github_repo を設定）
 
 # 実行
 terraform init
@@ -61,6 +46,30 @@ Terraformで作成されるリソース：
 - Lambdaエイリアス（`prod`）
 - イベントソースマッピング（SQS → Lambda）
 - API Gateway HTTP API（Lambda呼び出し用エンドポイント）
+
+### 2. Lambda関数を作成
+
+Terraformで作成されたロールを使ってLambda関数を作成します。
+
+```bash
+# srcディレクトリをzip化
+zip -r function.zip src/
+
+# Terraformで作成されたロールARNを取得
+cd terraform
+ROLE_ARN=$(terraform output -raw lambda_execution_role_arn)
+cd ..
+
+# Lambda関数を作成
+aws lambda create-function \
+  --function-name my-lambda-function \
+  --runtime nodejs20.x \
+  --handler index.handler \
+  --role $ROLE_ARN \
+  --zip-file fileb://function.zip
+```
+
+**注意**: Lambda関数はCommonJS形式（`exports.handler`）で記述してください。ESモジュール形式（`export const handler`）はエラーになります。
 
 ### 3. GitHub側の設定
 
