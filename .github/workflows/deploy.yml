@@ -15,22 +15,19 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION || 'ap-northeast-1' }}
 
-      - name: Deploy to Lambda
-        uses: aws-actions/aws-lambda-deploy@v1
+      - name: Install lambroll
+        uses: fujiwara/lambroll@v1
         with:
-          function-name: ${{ vars.LAMBDA_FUNCTION_NAME || 'my-lambda-function' }}
-          code-artifacts-dir: src/
-          handler: index.handler
-          runtime: nodejs20.x
-          publish: true
+          version: v1.4.1
+
+      - name: Deploy to Lambda
+        run: lambroll deploy
+        working-directory: src
+        env:
+          AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}

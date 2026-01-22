@@ -6,18 +6,15 @@ GitHub Actionsを使用してAWS Lambdaにデプロイするサンプルプロ�
 
 ```
 ├── .github/workflows/deploy.yml  # GitHub Actionsワークフロー
-├── src/index.js                  # Lambda関数
+├── src/
+│   ├── index.js                  # Lambda関数
+│   └── function.json             # lambroll設定ファイル
 ├── terraform/                    # インフラ管理
 │   ├── main.tf
 │   ├── variables.tf
 │   └── outputs.tf
 └── package.json
 ```
-
-## 使用するGitHub Actions
-
-- [aws-actions/configure-aws-credentials](https://github.com/aws-actions/configure-aws-credentials) - AWS認証（OIDC）
-- [aws-actions/aws-lambda-deploy](https://github.com/aws-actions/aws-lambda-deploy) - Lambdaデプロイ
 
 ## セットアップ手順
 
@@ -77,8 +74,8 @@ aws lambda create-function \
 | 種類 | 名前 | 値 |
 |------|------|-----|
 | Secret | `AWS_ROLE_ARN` | `terraform output github_actions_role_arn` の値 |
+| Secret | `AWS_ACCOUNT_ID` | AWSアカウントID（12桁の数字） |
 | Variable | `AWS_REGION` | `ap-northeast-1` |
-| Variable | `LAMBDA_FUNCTION_NAME` | Lambda関数名 |
 
 ### 4. デプロイ
 
@@ -122,7 +119,3 @@ git checkout <commit-hash>
 git push origin main
 ```
 
-## 参考リンク
-
-- [Using GitHub Actions to deploy Lambda functions - AWS Docs](https://docs.aws.amazon.com/lambda/latest/dg/deploying-github-actions.html)
-- [aws-actions/aws-lambda-deploy](https://github.com/aws-actions/aws-lambda-deploy)

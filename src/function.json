@@ -1,0 +1,6 @@
+{
+  "FunctionName": "my-lambda-function",
+  "Runtime": "nodejs20.x",
+  "Handler": "index.handler",
+  "Role": "arn:aws:iam::{{ must_env `AWS_ACCOUNT_ID` }}:role/lambda-execution-role"
+}

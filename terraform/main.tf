@@ -15,17 +15,38 @@ provider "aws" {
 
 data "aws_caller_identity" "current" {}
 
+# =============================================================================
 # GitHub OIDC Provider
+# GitHub ActionsがAWSリソースにアクセスするための認証基盤
+#
+# 【なぜOIDCを使うか】
+# - アクセスキー（シークレット）をGitHubに保存しなくて済む
+# - 短期トークン（15分〜1時間）で認証するため、漏洩リスクが低い
+#
+# 【認証フロー】
+# 1. GitHub ActionsがGitHubからOIDCトークンを取得
+# 2. そのトークンをAWS STSに渡して「私はこのリポジトリです」と証明
+# 3. AWSがトークンを検証し、IAMロールの一時クレデンシャルを発行
+# 4. GitHub Actionsがそのクレデンシャルでデプロイ実行
+# =============================================================================
 resource "aws_iam_openid_connect_provider" "github" {
-  url             = "https://token.actions.githubusercontent.com"
-  client_id_list  = ["sts.amazonaws.com"]
+  # GitHubのOIDCトークン発行エンドポイント
+  url = "https://token.actions.githubusercontent.com"
+  # このトークンを受け入れるサービス（AWS STS）
+  client_id_list = ["sts.amazonaws.com"]
+  # thumbprint_listは2023年以降AWS側で検証されなくなったため、ダミー値でOK
   thumbprint_list = ["ffffffffffffffffffffffffffffffffffffffff"]
 }
 
-# Lambda execution role
+# =============================================================================
+# Lambda実行ロール
+# Lambda関数が実行時に使用するIAMロール
+# CloudWatch LogsへのログとSQSからのメッセージ読み取り権限を付与
+# =============================================================================
 resource "aws_iam_role" "lambda_execution" {
   name = "lambda-execution-role"
 
+  # 信頼ポリシー: Lambdaサービスがこのロールを引き受けることを許可
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
@@ -40,20 +61,27 @@ resource "aws_iam_role" "lambda_execution" {
   })
 }
 
+# CloudWatch Logsへのログ書き込み権限（AWS管理ポリシー）
 resource "aws_iam_role_policy_attachment" "lambda_basic_execution" {
   role       = aws_iam_role.lambda_execution.name
   policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
 }
 
+# SQSキューからのメッセージ読み取り権限（AWS管理ポリシー）
 resource "aws_iam_role_policy_attachment" "lambda_sqs_execution" {
   role       = aws_iam_role.lambda_execution.name
   policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaSQSQueueExecutionRole"
 }
 
-# GitHub Actions deploy role
+# =============================================================================
+# GitHub Actionsデプロイロール
+# GitHub ActionsからLambdaをデプロイするためのIAMロール
+# OIDC認証により、特定のリポジトリからのみアクセスを許可
+# =============================================================================
 resource "aws_iam_role" "github_actions_lambda_deploy" {
   name = "github-actions-lambda-deploy"
 
+  # 信頼ポリシー: 特定のGitHubリポジトリからのOIDC認証のみ許可
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
@@ -64,9 +92,11 @@ resource "aws_iam_role" "github_actions_lambda_deploy" {
         }
         Action = "sts:AssumeRoleWithWebIdentity"
         Condition = {
+          # aud: 対象サービス（AWS STS）を検証
           StringEquals = {
             "token.actions.githubusercontent.com:aud" = "sts.amazonaws.com"
           }
+          # sub: リポジトリを検証（このリポジトリからのみ許可）
           StringLike = {
             "token.actions.githubusercontent.com:sub" = "repo:${var.github_org}/${var.github_repo}:*"
           }
@@ -76,6 +106,7 @@ resource "aws_iam_role" "github_actions_lambda_deploy" {
   })
 }
 
+# lambrollデプロイに必要な権限ポリシー
 resource "aws_iam_role_policy" "github_actions_lambda_deploy" {
   name = "lambda-deploy-policy"
   role = aws_iam_role.github_actions_lambda_deploy.id
@@ -86,27 +117,55 @@ resource "aws_iam_role_policy" "github_actions_lambda_deploy" {
       {
         Effect = "Allow"
         Action = [
-          "lambda:UpdateFunctionCode",
-          "lambda:UpdateFunctionConfiguration",
-          "lambda:GetFunctionConfiguration"
+          "lambda:CreateAlias",           # エイリアス作成
+          "lambda:CreateFunction",        # 関数作成
+          "lambda:GetFunction",           # 関数情報取得
+          "lambda:GetFunctionConfiguration", # 関数設定取得
+          "lambda:ListTags",              # タグ一覧取得
+          "lambda:UpdateAlias",           # エイリアス更新
+          "lambda:UpdateFunctionCode",    # コード更新
+          "lambda:UpdateFunctionConfiguration" # 設定更新
         ]
         Resource = "arn:aws:lambda:${var.aws_region}:${data.aws_caller_identity.current.account_id}:function:${var.lambda_function_name}"
+      },
+      {
+        # iam:PassRole = 「IAMロールを他のサービスに渡す」権限
+        #
+        # 【なぜ必要か】
+        # lambrollがLambda関数の設定を更新する際、
+        # 「この関数はlambda-execution-roleを使って実行する」と指定する。
+        # その"ロールを渡す"行為にこの権限が必要。
+        #
+        # 【セキュリティ上の意味】
+        # もしこの権限がなかったら、誰でも強力な権限を持つロールを
+        # Lambdaに割り当てて権限昇格できてしまう。
+        # Resourceで「渡せるロール」を限定することで安全性を確保。
+        Effect   = "Allow"
+        Action   = "iam:PassRole"
+        Resource = aws_iam_role.lambda_execution.arn  # このロールだけ渡せる
       }
     ]
   })
 }
 
-# SQS Queue
+# =============================================================================
+# SQSキュー（Lambdaトリガー用）
+# SQSにメッセージが届くとLambda関数が自動的に起動する
+# =============================================================================
 resource "aws_sqs_queue" "lambda_trigger" {
-  name                       = "${var.lambda_function_name}-queue"
+  name = "${var.lambda_function_name}-queue"
+  # Lambdaの処理時間を考慮したタイムアウト設定
+  # この時間内に処理が完了しないとメッセージが再度キューに戻る
   visibility_timeout_seconds = 30
 }
 
-# Lambda event source mapping (SQS -> Lambda)
-# エイリアスではなくLambda関数本体を呼び出す（エイリアスはGitHub Actionsで管理）
+# SQSとLambdaの接続設定（イベントソースマッピング）
+# SQSにメッセージが届くと自動的にLambdaを起動する
 resource "aws_lambda_event_source_mapping" "sqs_trigger" {
   event_source_arn = aws_sqs_queue.lambda_trigger.arn
+  # Lambda関数本体（$LATEST）を呼び出す
   function_name    = var.lambda_function_name
+  # 一度に処理するメッセージ数（1〜10000）
   batch_size       = 10
 }
 
