@@ -33,3 +33,9 @@ output "api_gateway_id" {
   description = "API Gateway ID"
   value       = aws_apigatewayv2_api.lambda_api.id
 }
+
+# ECR outputs
+output "ecr_repository_url" {
+  description = "ECR repository URL (Dockerイメージのpush先)"
+  value       = aws_ecr_repository.lambda.repository_url
+}

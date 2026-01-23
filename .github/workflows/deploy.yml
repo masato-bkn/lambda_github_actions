@@ -1,33 +1,92 @@
+# =============================================================================
+# AWS Lambda デプロイワークフロー
+#
+# 【デプロイフロー】
+# 1. Dockerイメージをビルド
+# 2. ECRにプッシュ
+# 3. lambrollでLambda関数を更新
+#
+# 【必要なシークレット】
+# - AWS_ROLE_ARN: GitHub Actions用IAMロールのARN
+# - AWS_ACCOUNT_ID: AWSアカウントID
+#
+# 【必要な変数（vars）】
+# - AWS_REGION: デプロイ先リージョン（デフォルト: ap-northeast-1）
+# =============================================================================
 name: Deploy to AWS Lambda
 
 on:
+  # 手動実行のみ（GitHub UIの「Run workflow」ボタンから実行）
   workflow_dispatch:
 
 permissions:
-  id-token: write  # OIDC認証に必要
+  # OIDC認証でAWSにアクセスするために必要
+  # GitHub ActionsがOIDCトークンを取得し、AWSのAssumeRoleWithWebIdentityで認証
+  id-token: write
   contents: read
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION || 'ap-northeast-1' }}
+  # ECRリポジトリ名（Terraformで作成したものと一致させる）
+  ECR_REPOSITORY: my-lambda-function
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
 
     steps:
+      # -----------------------------------------------------------------------
+      # 準備フェーズ
+      # -----------------------------------------------------------------------
       - name: Checkout code
         uses: actions/checkout@v4
 
+      # OIDC認証でAWSクレデンシャルを取得
+      # アクセスキーをシークレットに保存する必要がなく、セキュア
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
-          aws-region: ${{ vars.AWS_REGION || 'ap-northeast-1' }}
+          aws-region: ${{ env.AWS_REGION }}
 
+      # -----------------------------------------------------------------------
+      # Dockerイメージのビルド＆プッシュ
+      # -----------------------------------------------------------------------
+      # ECRへのログイン（docker loginに相当）
+      # 認証トークンは12時間有効
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      # Dockerイメージをビルドし、ECRにプッシュ
+      # タグにはコミットSHAを使用（イミュータブルなバージョニング）
+      - name: Build, tag, and push image to Amazon ECR
+        id: build-image
+        working-directory: src
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          # コミットSHAをタグに使用することで、どのコミットのイメージか追跡可能
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+          # 次のステップでIMAGE_URIとして参照できるよう出力
+          echo "image_uri=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
+
+      # -----------------------------------------------------------------------
+      # Lambdaデプロイ
+      # -----------------------------------------------------------------------
       - name: Install lambroll
         uses: fujiwara/lambroll@v1
         with:
           version: v1.4.1
 
+      # lambrollでLambda関数を更新
+      # function.jsonの設定に基づいてデプロイ
       - name: Deploy to Lambda
         run: lambroll deploy
         working-directory: src
         env:
           AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+          # ビルドステップで出力したイメージURIを使用
+          IMAGE_URI: ${{ steps.build-image.outputs.image_uri }}

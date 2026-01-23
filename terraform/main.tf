@@ -228,3 +228,45 @@ resource "aws_lambda_permission" "api_gateway" {
   principal     = "apigateway.amazonaws.com"
   source_arn    = "${aws_apigatewayv2_api.lambda_api.execution_arn}/*/*"
 }
+
+# =============================================================================
+# ECRリポジトリ
+# LambdaのDockerイメージを格納するプライベートレジストリ
+# =============================================================================
+resource "aws_ecr_repository" "lambda" {
+  name                 = var.lambda_function_name
+  image_tag_mutability = "MUTABLE"
+  force_delete         = true  # terraform destroyでイメージごと削除可能に
+}
+
+# GitHub ActionsにECRへのプッシュ権限を追加
+resource "aws_iam_role_policy" "github_actions_ecr_push" {
+  name = "ecr-push-policy"
+  role = aws_iam_role.github_actions_lambda_deploy.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        # ECRへのログイン（docker login）に必要
+        Effect   = "Allow"
+        Action   = "ecr:GetAuthorizationToken"
+        Resource = "*"
+      },
+      {
+        # イメージのpush/pullに必要な権限
+        Effect = "Allow"
+        Action = [
+          "ecr:BatchCheckLayerAvailability",
+          "ecr:BatchGetImage",
+          "ecr:CompleteLayerUpload",
+          "ecr:GetDownloadUrlForLayer",
+          "ecr:InitiateLayerUpload",
+          "ecr:PutImage",
+          "ecr:UploadLayerPart"
+        ]
+        Resource = aws_ecr_repository.lambda.arn
+      }
+    ]
+  })
+}

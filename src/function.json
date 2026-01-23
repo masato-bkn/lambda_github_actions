@@ -1,6 +1,8 @@
 {
   "FunctionName": "my-lambda-function",
-  "Runtime": "nodejs20.x",
-  "Handler": "index.handler",
+  "PackageType": "Image",
+  "Code": {
+    "ImageUri": "{{ must_env `IMAGE_URI` }}"
+  },
   "Role": "arn:aws:iam::{{ must_env `AWS_ACCOUNT_ID` }}:role/lambda-execution-role"
 }
